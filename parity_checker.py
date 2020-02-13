@@ -8,34 +8,49 @@ HOST_NAME = "$HOST"
 
 class ParityChecker:
   '''
-   Class expects arguments: filename, url1, url2
-   Eg: parity_checker.py "curl_1.txt" "localhost:8080" "iro-non-site-facing.prod.walmart.com"
+   Class expects arguments: folder-path, filename <optional>, url1, url2
+   Example: parity_checker.py "Regular-Negative-20200127-175720" "curl_1.txt" "localhost:8080" "abc-non-site-facing.prod.domain.com"
+    ~or~    parity_checker.py "Regular-Negative-20200127-175720" "localhost:8080" "abc-non-site-facing.prod.domain.com"
   '''
 
-  def __init__(self):
+  def __init__(self, is_arg):
     """
      Initialize all class level variables and validate arguments
     """
-    arguments = len(sys.argv) - 1
-    if arguments not in [2, 3]:
-      print("Please use format:\n python parity_checker.py 'curl_1.txt' 'localhost:8080' 'iro-non-site-facing.prod.walmart.com'")
-      print("\n~ OR ~ please use below format for bulk parity testing:")
-      print("python parity_checker.py 'localhost:8080' 'iro-non-site-facing.prod.walmart.com'")
-      sys.exit(1)
-    self.file_name = sys.argv[1] if len(sys.argv) - 1 == 3 else ''
-    self.url_1 = sys.argv[2] if len(sys.argv) - 1 == 3 else sys.argv[1]
-    self.url_2 = sys.argv[3] if len(sys.argv) - 1 == 3 else sys.argv[2]
+    if is_arg:
+      arguments = len(sys.argv) - 1
+      if arguments not in [3, 4]:
+        print("Please use format:\n python parity_checker.py 'Regular-Negative-20200127-175720' 'curl_1.txt' 'localhost:8080' 'abc-non-site-facing.prod.domain.com'")
+        print("\n~ OR ~ please use below format for bulk parity testing:")
+        print("python parity_checker.py 'Regular-Negative-20200127-175720' 'localhost:8080' 'abc-non-site-facing.prod.domain.com'")
+        sys.exit(1)
+      self.folder_path = sys.argv[1]
+      self.file_name = self.folder_path + "/" + sys.argv[2] if len(sys.argv) - 1 == 4 else ''
+      self.actual_file_name = sys.argv[2] if len(sys.argv) - 1 == 4 else ''
+      self.url_1 = sys.argv[3] if len(sys.argv) - 1 == 4 else sys.argv[2]
+      self.url_2 = sys.argv[4] if len(sys.argv) - 1 == 4 else sys.argv[3]
     self.url_context = None
     self.unmatched_tags = {}
     self.counter = 1
+
+  def initialize_params(self, folder_name, host_1, host_2):
+    if folder_name is None or host_1 is None or host_2 is None:
+      print("Invalid arguments! Please provide folder_name, host_1 and host_2 parameters.")
+      sys.exit(1)
+    self.folder_path = folder_name
+    self.url_1 = host_1
+    self.url_2 = host_2
 
   def bulkProcessParity(self):
     """
      Picks up all files starting with 'curl_req_' as curl text files
      and runs parity test.
     """
-    for name in glob.glob('curl_req_*'):
+    import os
+    path = os.path.join(os.getcwd(), self.folder_path, 'curl_req_*')
+    for name in glob.glob(path):
       self.file_name = name
+      self.actual_file_name = name[name.rfind('/')+1:]
       self.processParityCheck()
       self.counter += 1
 
@@ -56,11 +71,15 @@ class ParityChecker:
         self.url_context = uncurl.parse_context(curl_request_1)
         proc_1 = subprocess.Popen(curl_request_1, shell=True, stdout=subprocess.PIPE)
         (output_1, error_1) = proc_1.communicate()
-
+        if error_1:
+          print("error_1: " + str(error_1))
+        
         curl_request_2 = data.replace(HOST_NAME, self.url_2).replace('\n', '')
         print("\ncurl2: "+curl_request_2+"\n")
         proc_2 = subprocess.Popen(curl_request_2, shell=True, stdout=subprocess.PIPE)
         (output_2, error_2) = proc_2.communicate()
+        if error_2:
+          print("error_2: " + str(error_2))
     except Exception as err:
       print("Exception encountered!")
       print(err)
@@ -72,7 +91,6 @@ class ParityChecker:
         jsonObject_a = json.loads(output_1)
         jsonObject_b = json.loads(output_2)
         #print("\njsonObject_a: " + json.dumps(jsonObject_a, indent=4))
-        #print("\nself.sortedDeep(jsonObject_a): " + json.dumps((self.sortedDeep(jsonObject_a)), indent=4))
         self.unmatched_tags[self.url_1] = {}
         self.compare_object(self.url_1, '', self.sortedDeep(jsonObject_a), self.sortedDeep(jsonObject_b))
         self.unmatched_tags[self.url_2] = {}
@@ -133,8 +151,8 @@ class ParityChecker:
       table_body += "<tr><td><b>Headers:</b></td><td>" + json.dumps(self.url_context.headers) + "</td></tr>"
       table_body += "<tr><td><b>Request Body:</b></td><td>" + unicode(self.url_context.data) + "</td></tr></table><br/>"
       table_body += "<h4>Differences:</h4><br/><table id='hosts'><tr>"
-      for ky in self.unmatched_tags.keys():
-        table_body += "<th colspan='2'>" + ky + "</th>"
+      #for ky in self.unmatched_tags.keys():
+      table_body += "<th colspan='2'>" + self.url_1 + "</th>" + "<th colspan='2'>" + self.url_2 + "</th>"
       table_body += "</tr><tr><td><b>Attribute</b></td><td><b>Value</b></td><td><b>Attribute</b></td><td><b>Value</b></td></tr>"
       for key, val in parity_data.iteritems():
         keys = key.split("=")
@@ -155,11 +173,10 @@ class ParityChecker:
   def wrapStringInHTMLMac(self, body):
     import datetime
     import os
-    from webbrowser import open_new_tab
 
     now = datetime.datetime.today().strftime("%Y%m%d-%H%M%S")
-    fn = self.file_name.split('.txt')[0]+'-' if self.file_name else ''
-    filename = 'parity_results-'+fn+now+'.html'
+    fn = self.actual_file_name.split('.txt')[0]+'-' if self.actual_file_name else ''
+    filename = os.path.join(os.getcwd(), self.folder_path, 'parity_results-'+fn+now+'.html')
     f = open(filename,'w')
 
     html_string = """<html>
@@ -198,12 +215,11 @@ class ParityChecker:
     f.write(whole)
     f.close()
 
-    filename = os.getcwd() + '/' + filename
     print('filename:' + filename)
-    open_new_tab(filename)
 
-pc = ParityChecker()
-if len(sys.argv) - 1 == 2:
-  pc.bulkProcessParity()
-else:
-  pc.processParityCheck()
+if __name__ == "__main__":
+  pc = ParityChecker(True)
+  if len(sys.argv) - 1 == 3:
+    pc.bulkProcessParity()
+  else:
+    pc.processParityCheck()
